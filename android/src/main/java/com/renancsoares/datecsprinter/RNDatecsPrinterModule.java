@@ -1,31 +1,31 @@
 package com.renancsoares.datecsprinter;
 
-import com.facebook.react.bridge.ActivityEventListener;
-import com.facebook.react.bridge.LifecycleEventListener;
-import com.facebook.react.bridge.ReactApplicationContext;
-import com.facebook.react.bridge.ReactContextBaseJavaModule;
-import com.facebook.react.bridge.ReactMethod;
-import com.facebook.react.bridge.Promise;
-
-import android.app.Activity;
-import android.os.Bundle;
-import android.os.Handler;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.util.Base64;
 import android.util.Log;
 import android.widget.Toast;
-import java.util.Set;
-import java.util.ArrayList;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.IOException;
-import java.util.UUID;
 
-import com.datecs.api.BuildInfo;
-import com.datecs.api.printer.PrinterInformation;
 import com.datecs.api.printer.Printer;
 import com.datecs.api.printer.ProtocolAdapter;
+import com.facebook.react.bridge.LifecycleEventListener;
+import com.facebook.react.bridge.Promise;
+import com.facebook.react.bridge.ReactApplicationContext;
+import com.facebook.react.bridge.ReactContextBaseJavaModule;
+import com.facebook.react.bridge.ReactMethod;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class RNDatecsPrinterModule extends ReactContextBaseJavaModule implements LifecycleEventListener{
 
@@ -193,7 +193,7 @@ public class RNDatecsPrinterModule extends ReactContextBaseJavaModule implements
 		mProtocolAdapter = new ProtocolAdapter(inputStream, outputStream);
 		if (mProtocolAdapter.isProtocolEnabled()) {
 			final ProtocolAdapter.Channel channel = mProtocolAdapter.getChannel(ProtocolAdapter.CHANNEL_PRINTER);
-			
+
 			// it was causing errors, need to be reviewed
             // channel.setListener(mChannelListener);
 
@@ -293,9 +293,79 @@ public class RNDatecsPrinterModule extends ReactContextBaseJavaModule implements
 
 			promise.resolve("PRINTED");
 		} catch (Exception e) {
-			promise.reject("Erro: " + e.getMessage());
+			promise.reject(e);
 		}
 	}
+
+  @ReactMethod
+  public void printTemplate(String template, Promise promise) throws IOException {
+    try {
+      String imageRegex = "\\{image\\=([0-9a-zA-Z\\+/=]{20,})\\}";
+
+      String[] templatesText = template.split(imageRegex);
+
+      List<String> tagsImagens = getImagesTags(template, imageRegex);
+      String[] imagesSource = getImagesSources(tagsImagens);
+
+      int i=0;
+      int imagesArraySize = imagesSource.length;
+
+      for(String templateTexto: templatesText) {
+        if(!templateTexto.isEmpty()) {
+          mPrinter.printTaggedText(templateTexto,"ISO-8859-1");
+          mPrinter.flush();
+        }
+        if(i<imagesArraySize) {
+          printImage(imagesSource[i]);
+          mPrinter.flush();
+        }
+        i++;
+      }
+
+      promise.resolve("PRINTED");
+
+    } catch (Exception e) {
+      promise.reject(e);
+    }
+  }
+
+  private String[] getImagesSources(List<String> tagsImagens) {
+
+    List<String> images = new ArrayList<>();
+
+    for (String tagImage : tagsImagens) {
+      images.add(tagImage.substring(tagImage.indexOf("=")+1,tagImage.indexOf("}")));
+    }
+
+    String[] imagesArray = new String[images.size()];
+    return images.toArray(imagesArray);
+  }
+
+
+  private List<String> getImagesTags(String template, String imageRegex) {
+    List<String> tagsImagens = new ArrayList<>();
+    Matcher m = Pattern.compile(imageRegex).matcher(template);
+    while (m.find()) {
+      tagsImagens.add(m.group());
+    }
+    return tagsImagens;
+  }
+
+  private void printImage(String imagePath) throws IOException {
+
+    byte[] decodedString = Base64.decode(imagePath, Base64.DEFAULT);
+    Bitmap decodedByte = BitmapFactory.decodeByteArray(decodedString, 0, decodedString.length);
+
+    Bitmap scaledBitmap = Bitmap.createScaledBitmap(decodedByte, 200, 84, false);
+
+    final int width = scaledBitmap.getWidth();
+    final int height = scaledBitmap.getHeight();
+    final int[] argb = new int[width * height];
+    scaledBitmap.getPixels(argb, 0, width, 0, 0, width, height);
+    scaledBitmap.recycle();
+
+    mPrinter.printImage(argb, width, height, Printer.ALIGN_CENTER, true);
+  }
 
 	/**
      * Disconnect printer
